@@ -136,8 +136,7 @@ object VideoEffects {
         val av = setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO)
         val sequences = ArrayList<EditedMediaItemSequence>()
         if (!plan.usesTwoTracks) {
-            sequences += EditedMediaItemSequence.Builder(av).addItems(plan.clips.map { item(it.clip) })
-                .experimentalSetForceAudioTrack(true).build()
+            sequences += EditedMediaItemSequence.Builder(av).addItems(plan.clips.map { item(it.clip) }).build()
         } else {
             for (track in 0..1) {
                 val b = EditedMediaItemSequence.Builder(av)
@@ -151,7 +150,7 @@ object VideoEffects {
                 }
                 if (!any) continue
                 if (plan.totalUs > cursor) b.addGap(plan.totalUs - cursor)
-                sequences += b.experimentalSetForceAudioTrack(true).experimentalSetForceVideoTrack(true).build()
+                sequences += b.build()
             }
         }
 

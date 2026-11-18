@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.MultipleInputVideoGraph
 import androidx.media3.transformer.CompositionPlayer
 import de.mawlo.mediaeditor.common.Adjustments
 import de.mawlo.mediaeditor.common.TextItem
@@ -79,13 +80,14 @@ class VideoEditorViewModel(app: Application) : AndroidViewModel(app) {
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
         override fun onPlayerError(error: PlaybackException) {
-            message = "Vorschau-Fehler: ${error.cause?.message ?: error.errorCodeName}"
+            message = "Vorschau-Fehler ${error.errorCodeName}: ${describe(error)}"
         }
     }
 
     private fun ensurePlayer(): CompositionPlayer {
         player?.let { return it }
-        val p = CompositionPlayer.Builder(ctx).build()
+        // Mehrere Videospuren gleichzeitig (für Übergänge)
+        val p = CompositionPlayer.Builder(ctx).setVideoGraphFactory(MultipleInputVideoGraph.Factory()).build()
         p.addListener(listener)
         p.repeatMode = Player.REPEAT_MODE_ALL
         player = p
@@ -281,9 +283,16 @@ class VideoEditorViewModel(app: Application) : AndroidViewModel(app) {
                 p.prepare()
                 if (wasPlaying) p.play()
             } catch (t: Throwable) {
-                message = "Vorschau-Fehler: ${t.message}"
+                message = "Vorschau-Fehler: ${describe(t)}"
             }
         }
+    }
+
+    /** Fehlertext mit Typ und Fundstelle – auch wenn die Bibliothek keinen Text liefert. */
+    private fun describe(t: Throwable): String {
+        val root = generateSequence(t) { it.cause }.last()
+        val where = root.stackTrace.firstOrNull { !it.className.startsWith("com.google.common") }
+        return "${root.javaClass.simpleName}: ${root.message ?: "-"}" + (where?.let { " (${it.className.substringAfterLast('.')}.${it.methodName})" } ?: "")
     }
 
     fun togglePlay() {
@@ -313,12 +322,12 @@ class VideoEditorViewModel(app: Application) : AndroidViewModel(app) {
                 exporter = null
                 message = result.fold(
                     { "Gespeichert in Galerie › Filme › MediaStudio" },
-                    { "Export fehlgeschlagen: ${it.cause?.message ?: it.message}" },
+                    { "Export fehlgeschlagen: ${describe(it)}" },
                 )
             }
         } catch (t: Throwable) {
             busy = null; progress = null; exporter = null
-            message = "Export fehlgeschlagen: ${t.message}"
+            message = "Export fehlgeschlagen: ${describe(t)}"
         }
     }
 
