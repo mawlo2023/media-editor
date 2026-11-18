@@ -1,0 +1,10 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+# KI-Modell wird per scripts/download_model.sh geladen (zu groß für Git)
+app/src/main/assets/lama_fp32.onnx
+*.keystore
+*.jks
