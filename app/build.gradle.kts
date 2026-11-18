@@ -8,14 +8,14 @@ plugins {
 
 android {
     namespace = "de.mawlo.mediaeditor"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "de.mawlo.mediaeditor"
         minSdk = 29
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 36
+        versionCode = 2
+        versionName = "1.1"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -81,7 +81,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    val media3 = "1.5.1"
+    val media3 = "1.11.1"
     implementation("androidx.media3:media3-transformer:$media3")
     implementation("androidx.media3:media3-effect:$media3")
     implementation("androidx.media3:media3-common:$media3")
@@ -90,4 +90,6 @@ dependencies {
 
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

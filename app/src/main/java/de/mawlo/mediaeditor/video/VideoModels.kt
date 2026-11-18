@@ -15,6 +15,9 @@ data class Clip(
     val startMs: Long = 0,
     val endMs: Long = durationMs,
     val thumb: Bitmap? = null,
+    /** Übergang vom vorherigen Clip in diesen Clip. */
+    val transition: TransitionType = TransitionType.CUT,
+    val transitionMs: Long = 0,
 ) {
     val trimmedMs get() = endMs - startMs
 }

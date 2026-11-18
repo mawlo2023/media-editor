@@ -21,23 +21,32 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoFilter
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
@@ -45,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -52,7 +62,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,6 +92,7 @@ import de.mawlo.mediaeditor.common.TextRenderer
 import de.mawlo.mediaeditor.photo.AdjustControls
 import de.mawlo.mediaeditor.photo.colorFilterOf
 import de.mawlo.mediaeditor.ui.Accent
+import de.mawlo.mediaeditor.ui.Accent2
 import de.mawlo.mediaeditor.ui.Bg
 import de.mawlo.mediaeditor.ui.BusyOverlay
 import de.mawlo.mediaeditor.ui.Chip
@@ -90,10 +104,13 @@ import de.mawlo.mediaeditor.ui.TextDim
 import de.mawlo.mediaeditor.ui.TextPanel
 import de.mawlo.mediaeditor.ui.ToolButton
 
+private val sliderColors @Composable get() =
+    SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Accent, inactiveTrackColor = PanelLight)
+
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoEditorScreen(onBack: () -> Unit, vm: VideoEditorViewModel = viewModel()) {
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(30)) { uris ->
         if (uris.isNotEmpty()) vm.addClips(uris) else if (vm.clips.isEmpty()) onBack()
     }
     val musicPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -103,7 +120,7 @@ fun VideoEditorScreen(onBack: () -> Unit, vm: VideoEditorViewModel = viewModel()
 
     LaunchedEffect(Unit) { if (vm.clips.isEmpty()) pickVideos() }
     BackHandler(onBack = onBack)
-    DisposableEffect(Unit) { onDispose { vm.player.pause() } }
+    DisposableEffect(Unit) { onDispose { vm.pause() } }
 
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(vm.message) { vm.message?.let { snackbar.showSnackbar(it); vm.message = null } }
@@ -112,38 +129,41 @@ fun VideoEditorScreen(onBack: () -> Unit, vm: VideoEditorViewModel = viewModel()
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück", tint = Color.White) }
-                Column {
-                    Text("Video", color = Color.White, fontSize = 18.sp)
-                    if (vm.clips.isNotEmpty()) Text("Länge ${formatTime(vm.totalDurationMs)}", color = TextDim, fontSize = 12.sp)
-                }
+                Text("Video", color = Color.White, fontSize = 18.sp)
                 Spacer(Modifier.weight(1f))
                 Button(onClick = vm::export, enabled = vm.clips.isNotEmpty(), modifier = Modifier.padding(end = 8.dp)) { Text("Exportieren") }
             }
 
             // Vorschau
-            Box(Modifier.weight(1f).fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
-                if (vm.clips.isNotEmpty()) {
-                    Box(Modifier.aspectRatio(vm.outputAspect, matchHeightConstraintsFirst = vm.outputAspect < 1f)) {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
+                val p = vm.player
+                if (vm.clips.isNotEmpty() && p != null) {
+                    Box(
+                        Modifier.aspectRatio(vm.outputAspect, matchHeightConstraintsFirst = vm.outputAspect < 1f)
+                            .clip(RoundedCornerShape(8.dp)).background(Color.Black),
+                    ) {
                         AndroidView(
                             factory = { c ->
                                 PlayerView(c).apply {
-                                    player = vm.player
+                                    useController = false
                                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                    setShowNextButton(false)
-                                    setShowPreviousButton(false)
-                                    setBackgroundColor(android.graphics.Color.BLACK)
+                                    setShutterBackgroundColor(android.graphics.Color.BLACK)
                                 }
                             },
+                            update = { it.player = p },
                             modifier = Modifier.fillMaxSize(),
                         )
                         OverlayCanvas(vm)
                     }
                 }
             }
+            PlaybackBar(vm)
 
-            Column(Modifier.fillMaxWidth().background(Panel).heightIn(min = 150.dp)) {
+            Column(Modifier.fillMaxWidth().background(Panel).heightIn(min = 160.dp, max = 300.dp).verticalScroll(rememberScrollState())) {
                 when (vm.tool) {
                     VideoTool.CUT -> CutPanel(vm, ::pickVideos)
+                    VideoTool.TRANSITION -> TransitionPanel(vm)
+                    VideoTool.EFFECTS -> EffectsPanel(vm)
                     VideoTool.FILTER -> FilterPanel(vm)
                     VideoTool.ADJUST -> AdjustControls(vm.adj, vm::updateAdj)
                     VideoTool.TEXT -> TextPanel(vm.texts, vm.selectedTextId, vm::addText, vm::updateText, vm::deleteText)
@@ -157,6 +177,8 @@ fun VideoEditorScreen(onBack: () -> Unit, vm: VideoEditorViewModel = viewModel()
             ) {
                 val icons = mapOf(
                     VideoTool.CUT to Icons.Default.ContentCut,
+                    VideoTool.TRANSITION to Icons.Default.SwapHoriz,
+                    VideoTool.EFFECTS to Icons.Default.AutoAwesome,
                     VideoTool.FILTER to Icons.Default.PhotoFilter,
                     VideoTool.ADJUST to Icons.Default.Tune,
                     VideoTool.TEXT to Icons.Default.TextFields,
@@ -175,6 +197,33 @@ fun VideoEditorScreen(onBack: () -> Unit, vm: VideoEditorViewModel = viewModel()
                 }
             }
         }
+    }
+}
+
+/** Eigene Wiedergabe-Steuerung: Play/Pause, Zeit, Spulen. */
+@Composable
+private fun PlaybackBar(vm: VideoEditorViewModel) {
+    if (vm.clips.isEmpty()) return
+    val total = vm.totalDurationMs.coerceAtLeast(1)
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(44.dp).clip(CircleShape).background(Accent).clickable(onClick = vm::togglePlay),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(if (vm.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (vm.isPlaying) "Pause" else "Abspielen", tint = Color.White)
+        }
+        HSpace(8)
+        Text(formatTime(dragging?.toLong() ?: vm.positionMs.coerceAtMost(total)), color = Color.White, fontSize = 12.sp)
+        Slider(
+            value = (dragging ?: vm.positionMs.toFloat()).coerceIn(0f, total.toFloat()),
+            onValueChange = { dragging = it },
+            onValueChangeFinished = { dragging?.let { vm.seekTo(it.toLong()) }; dragging = null },
+            valueRange = 0f..total.toFloat(),
+            colors = sliderColors,
+            modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
+        )
+        Text(formatTime(total), color = TextDim, fontSize = 12.sp)
     }
 }
 
@@ -219,6 +268,22 @@ private fun OverlayCanvas(vm: VideoEditorViewModel) {
 }
 
 @Composable
+private fun ClipThumb(c: Clip, index: Int, selected: Boolean, size: Int = 64, onClick: () -> Unit) {
+    Box(
+        Modifier.size(size.dp).clip(RoundedCornerShape(8.dp))
+            .border(if (selected) 3.dp else 0.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(8.dp))
+            .background(PanelLight)
+            .clickable(onClick = onClick),
+    ) {
+        c.thumb?.let { Image(remember(it) { it.asImageBitmap() }, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+        Text(
+            "${index + 1}", color = Color.White, fontSize = 11.sp,
+            modifier = Modifier.align(Alignment.TopStart).background(Color(0x99000000)).padding(horizontal = 4.dp),
+        )
+    }
+}
+
+@Composable
 private fun CutPanel(vm: VideoEditorViewModel, onAdd: () -> Unit) {
     val sel = vm.clips.firstOrNull { it.id == vm.selectedClipId }
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
@@ -227,21 +292,7 @@ private fun CutPanel(vm: VideoEditorViewModel, onAdd: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            vm.clips.forEachIndexed { i, c ->
-                val selected = c.id == vm.selectedClipId
-                Box(
-                    Modifier.size(64.dp).clip(RoundedCornerShape(8.dp))
-                        .border(if (selected) 3.dp else 0.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(8.dp))
-                        .background(PanelLight)
-                        .clickable { vm.selectedClipId = c.id },
-                ) {
-                    c.thumb?.let { Image(remember(it) { it.asImageBitmap() }, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-                    Text(
-                        "${i + 1}", color = Color.White, fontSize = 11.sp,
-                        modifier = Modifier.align(Alignment.TopStart).background(Color(0x99000000)).padding(horizontal = 4.dp),
-                    )
-                }
-            }
+            vm.clips.forEachIndexed { i, c -> ClipThumb(c, i, c.id == vm.selectedClipId) { vm.selectedClipId = c.id } }
             Box(
                 Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(PanelLight).clickable(onClick = onAdd),
                 contentAlignment = Alignment.Center,
@@ -253,7 +304,7 @@ private fun CutPanel(vm: VideoEditorViewModel, onAdd: () -> Unit) {
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { vm.moveClip(sel.id, -1) }) { Icon(Icons.Default.ChevronLeft, "Nach vorne", tint = Color.White) }
                 IconButton(onClick = { vm.moveClip(sel.id, 1) }) { Icon(Icons.Default.ChevronRight, "Nach hinten", tint = Color.White) }
-                IconButton(onClick = { vm.removeClip(sel.id) }) { Icon(Icons.Default.Delete, "Entfernen", tint = Color(0xFFFF4D8D)) }
+                IconButton(onClick = { vm.removeClip(sel.id) }) { Icon(Icons.Default.Delete, "Entfernen", tint = Accent2) }
             }
             RangeSlider(
                 value = sel.startMs.toFloat()..sel.endMs.toFloat(),
@@ -264,10 +315,89 @@ private fun CutPanel(vm: VideoEditorViewModel, onAdd: () -> Unit) {
                 },
                 onValueChangeFinished = vm::trimFinished,
                 valueRange = 0f..sel.durationMs.toFloat(),
-                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Accent, inactiveTrackColor = PanelLight),
+                colors = sliderColors,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun TransitionPanel(vm: VideoEditorViewModel) {
+    if (vm.clips.size < 2) {
+        Text("Füge mindestens zwei Clips hinzu, um Übergänge zu setzen.", color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+        return
+    }
+    // Ausgewählt ist immer der Clip NACH dem Übergang
+    val selIdx = vm.clips.indexOfFirst { it.id == vm.selectedClipId }.let { if (it < 1) 1 else it }
+    val sel = vm.clips[selIdx]
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            vm.clips.forEachIndexed { i, c ->
+                if (i > 0) {
+                    val active = i == selIdx
+                    Box(
+                        Modifier.padding(horizontal = 4.dp).size(30.dp).clip(RoundedCornerShape(6.dp))
+                            .background(if (active) Accent else if (c.transition != TransitionType.CUT) Color(0xFF3A2D5C) else PanelLight)
+                            .clickable { vm.selectedClipId = c.id },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Default.SwapHoriz, "Übergang ${i}", tint = Color.White, modifier = Modifier.size(18.dp)) }
+                }
+                ClipThumb(c, i, false, size = 48) { if (i > 0) vm.selectedClipId = c.id }
+            }
+        }
+        Text("Übergang zu Clip ${selIdx + 1}", color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, top = 8.dp))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TransitionType.entries.forEach { t -> Chip(t.label, sel.transition == t) { vm.setTransition(sel.id, t) } }
+        }
+        if (sel.transition != TransitionType.CUT) {
+            var ms by remember(sel.id, sel.transition) { mutableStateOf(sel.transitionMs.toFloat()) }
+            LabeledSlider("Dauer", ms, { ms = it }, 150f..1500f) { "%.1f s".format(it / 1000f) }
+            LaunchedEffect(ms) {
+                kotlinx.coroutines.delay(250)
+                if (ms.toLong() != sel.transitionMs) vm.setTransition(sel.id, sel.transition, ms.toLong())
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                Spacer(Modifier.weight(1f))
+                OutlinedButton(onClick = { vm.applyTransitionToAll(sel.transition, sel.transitionMs) }) { Text("Für alle Clips") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EffectsPanel(vm: VideoEditorViewModel) {
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Text("Look über das ganze Video", color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) { StyleFx.entries.forEach { s -> Chip(s.label, vm.style == s) { vm.changeStyle(s) } } }
+        if (vm.style != StyleFx.NONE) LabeledSlider("Stärke", vm.styleIntensity, vm::changeStyleIntensity, 0f..1f)
+
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.GraphicEq, null, tint = Accent, modifier = Modifier.size(18.dp))
+            HSpace(6)
+            Text("Auf jeden Beat der Musik", color = TextDim, fontSize = 13.sp)
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) { BeatFx.entries.forEach { f -> Chip(f.label, f in vm.beatFx) { vm.toggleBeatFx(f) } } }
+        if (vm.beatFx.isNotEmpty()) {
+            if (vm.beatInfo == null) {
+                Text("Wähle unter „Musik“ einen Song – dann reagieren die Effekte auf den Beat.", color = Accent2, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
+            } else {
+                LabeledSlider("Intensität", vm.beatIntensity, vm::changeBeatIntensity, 0.2f..1f)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -311,7 +441,31 @@ private fun AudioPanel(vm: VideoEditorViewModel, onPick: () -> Unit) {
             Button(onClick = onPick) { Icon(Icons.Default.MusicNote, null); HSpace(6); Text(if (vm.music == null) "Musik wählen" else "Andere Musik") }
             HSpace(12)
             vm.musicName?.let { Text(it, color = Color.White, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)) }
-            if (vm.music != null) IconButton(onClick = { vm.chooseMusic(null) }) { Icon(Icons.Default.Delete, "Musik entfernen", tint = Color(0xFFFF4D8D)) }
+            if (vm.music != null) IconButton(onClick = { vm.chooseMusic(null) }) { Icon(Icons.Default.Delete, "Musik entfernen", tint = Accent2) }
+        }
+        vm.beatInfo?.let { info ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.GraphicEq, null, tint = Accent, modifier = Modifier.size(18.dp))
+                HSpace(6)
+                Text("${info.bpm.toInt()} BPM · ${info.beatsMs.size} Beats erkannt", color = Color.White, fontSize = 13.sp)
+            }
+            Text("Clips automatisch auf den Beat schneiden:", color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, top = 4.dp))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(1 to "Jeder Beat", 2 to "Alle 2 Beats", 4 to "Alle 4 Beats", 8 to "Alle 8 Beats").forEach { (n, l) ->
+                    Chip(l, false) { vm.syncToBeats(n) }
+                }
+            }
+        }
+        if (vm.music != null && vm.musicDurationMs > 0) {
+            var start by remember(vm.music) { mutableStateOf(vm.musicStartMs.toFloat()) }
+            LabeledSlider("Musik beginnt bei", start, { start = it }, 0f..(vm.musicDurationMs - 1000).coerceAtLeast(1).toFloat()) { formatTime(it.toLong()) }
+            LaunchedEffect(start) {
+                kotlinx.coroutines.delay(300)
+                if (start.toLong() != vm.musicStartMs) vm.changeMusicStart(start.toLong())
+            }
         }
         LabeledSlider("Originalton", vm.originalVolume, vm::changeOriginalVolume, 0f..1f) { if (it == 0f) "stumm" else "${(it * 100).toInt()} %" }
         if (vm.music != null) LabeledSlider("Musik", vm.musicVolume, vm::changeMusicVolume, 0f..1f) { "${(it * 100).toInt()} %" }
@@ -331,5 +485,6 @@ private fun FormatPanel(vm: VideoEditorViewModel) {
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) { SpeedOptions.forEach { s -> Chip("${s}x".replace(".0x", "x"), vm.speed == s) { vm.changeSpeed(s) } } }
+        Spacer(Modifier.width(1.dp).height(8.dp))
     }
 }

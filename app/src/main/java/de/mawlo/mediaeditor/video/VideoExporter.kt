@@ -34,6 +34,7 @@ import androidx.media3.transformer.VideoEncoderSettings
 import com.google.common.collect.ImmutableList
 import de.mawlo.mediaeditor.common.Adjustments
 import de.mawlo.mediaeditor.common.ColorFilters
+import de.mawlo.mediaeditor.common.FilterPreset
 import de.mawlo.mediaeditor.common.TextItem
 import de.mawlo.mediaeditor.common.TextRenderer
 import java.io.File
@@ -49,34 +50,137 @@ data class ExportRequest(
     val originalVolume: Float,
     val music: Uri?,
     val musicVolume: Float,
-)
+    val musicStartMs: Long,
+    val musicDurationMs: Long,
+    /** Beats in der Musikdatei (ms). */
+    val musicBeatsMs: LongArray,
+    val beatFx: Set<BeatFx>,
+    val beatIntensity: Float,
+    val style: StyleFx,
+    val styleIntensity: Float,
+) {
+    val plan: TimelinePlan by lazy { TimelinePlan.build(clips, speed) }
+
+    /** Beats auf der Zeitachse des fertigen Videos (µs) – Musik läuft in Schleife ab [musicStartMs]. */
+    fun outputBeatsUs(): LongArray {
+        if (music == null || musicBeatsMs.isEmpty()) return LongArray(0)
+        val loopMs = musicDurationMs - musicStartMs
+        if (loopMs <= 0) return LongArray(0)
+        val total = plan.totalUs
+        val out = ArrayList<Long>()
+        var base = 0L
+        while (base * 1000 < total) {
+            for (b in musicBeatsMs) {
+                if (b < musicStartMs) continue
+                val t = (base + b - musicStartMs) * 1000
+                if (t >= total) break
+                out += t
+            }
+            base += loopMs
+        }
+        return out.toLongArray()
+    }
+}
 
 @UnstableApi
 object VideoEffects {
 
-    /** Ausgabegröße (gerade Zahlen, max. 1920 lange Seite). */
-    fun outputSize(req: ExportRequest): Pair<Int, Int> {
-        if (req.format != VideoFormat.ORIGINAL) return req.format.width to req.format.height
-        val c = req.clips.first()
+    fun outputSize(clips: List<Clip>, format: VideoFormat): Pair<Int, Int> {
+        if (format != VideoFormat.ORIGINAL || clips.isEmpty()) {
+            return if (format == VideoFormat.ORIGINAL) 1080 to 1920 else format.width to format.height
+        }
+        val c = clips.first()
         val s = minOf(1f, 1920f / max(c.width, c.height))
         fun even(v: Float) = ((v.roundToInt() / 2) * 2).coerceAtLeast(2)
         return even(c.width * s) to even(c.height * s)
     }
 
-    /** Farb-Effekte (Filter + Regler) – auch für die Live-Vorschau im Player. */
     fun colorEffects(adj: Adjustments): List<Effect> {
-        if (adj.filter == de.mawlo.mediaeditor.common.FilterPreset.NONE &&
-            adj.brightness == 0f && adj.contrast == 0f && adj.saturation == 0f && adj.warmth == 0f && adj.fade == 0f
+        if (adj.filter == FilterPreset.NONE && adj.brightness == 0f && adj.contrast == 0f &&
+            adj.saturation == 0f && adj.warmth == 0f && adj.fade == 0f
         ) return emptyList()
         val m = ColorFilters.toMedia3(ColorFilters.build(adj))
         return listOf(RgbMatrix { _, _ -> m })
     }
 
-    fun presentation(req: ExportRequest): Presentation {
-        val (w, h) = outputSize(req)
+    private class ConstantSpeed(private val speed: Float) : SpeedProvider {
+        override fun getSpeed(timeUs: Long) = speed
+        override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET
+    }
+
+    private fun volume(v: Float): AudioProcessor = ChannelMixingAudioProcessor().apply {
+        for (ch in 1..2) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(v))
+    }
+
+    /**
+     * Baut die komplette Komposition – identisch für Vorschau und Export.
+     * Bei Übergängen werden die Clips abwechselnd auf zwei Spuren gelegt, die sich überlappen.
+     */
+    fun buildComposition(req: ExportRequest, forExport: Boolean): Composition {
+        val plan = req.plan
+        val (w, h) = outputSize(req.clips, req.format)
         val layout = if (req.format == VideoFormat.ORIGINAL) Presentation.LAYOUT_SCALE_TO_FIT
         else Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
-        return Presentation.createForWidthAndHeight(w, h, layout)
+
+        fun item(c: Clip): EditedMediaItem {
+            val mi = MediaItem.Builder().setUri(c.uri).setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder().setStartPositionMs(c.startMs).setEndPositionMs(c.endMs).build()
+            ).build()
+            val b = EditedMediaItem.Builder(mi)
+                .setDurationUs(c.durationMs * 1000)
+                .setEffects(Effects(listOf(volume(req.originalVolume)), listOf(Presentation.createForWidthAndHeight(w, h, layout))))
+            if (req.speed != 1f) b.setSpeed(ConstantSpeed(req.speed))
+            return b.build()
+        }
+
+        val av = setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO)
+        val sequences = ArrayList<EditedMediaItemSequence>()
+        if (!plan.usesTwoTracks) {
+            sequences += EditedMediaItemSequence.Builder(av).addItems(plan.clips.map { item(it.clip) })
+                .experimentalSetForceAudioTrack(true).build()
+        } else {
+            for (track in 0..1) {
+                val b = EditedMediaItemSequence.Builder(av)
+                var cursor = 0L
+                var any = false
+                for (p in plan.clips.filter { it.input == track }) {
+                    if (p.startUs > cursor) b.addGap(p.startUs - cursor)
+                    b.addItem(item(p.clip))
+                    cursor = p.endUs
+                    any = true
+                }
+                if (!any) continue
+                if (plan.totalUs > cursor) b.addGap(plan.totalUs - cursor)
+                sequences += b.experimentalSetForceAudioTrack(true).experimentalSetForceVideoTrack(true).build()
+            }
+        }
+
+        if (req.music != null) {
+            val mi = MediaItem.Builder().setUri(req.music).setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder().setStartPositionMs(req.musicStartMs).build()
+            ).build()
+            val music = EditedMediaItem.Builder(mi)
+                .setRemoveVideo(true)
+                .setDurationUs(req.musicDurationMs * 1000)
+                .setEffects(Effects(listOf(volume(req.musicVolume)), emptyList()))
+                .build()
+            sequences += EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(music).setIsLooping(true).build()
+        }
+
+        val video = ArrayList<Effect>()
+        video += colorEffects(req.adj)
+        val fx = FxTimeline(plan, req.outputBeatsUs(), req.beatFx, req.beatIntensity, req.style, req.styleIntensity)
+        if (!fx.isNoOp) video += FxEffect(fx)
+        if (forExport && (req.texts.isNotEmpty() || req.adj.vignette > 0f)) {
+            val bmp = TextRenderer.renderOverlay(w, h, req.texts, req.adj.vignette)
+            video += OverlayEffect(ImmutableList.of<TextureOverlay>(BitmapOverlay.createStaticBitmapOverlay(bmp)))
+        }
+
+        val cb = Composition.Builder(sequences)
+            .setEffects(Effects(emptyList(), video))
+            .experimentalSetForceAudioTrack(true)
+        if (plan.usesTwoTracks) cb.setVideoCompositorSettings(TransitionCompositorSettings(plan, w, h))
+        return cb.build()
     }
 }
 
@@ -86,61 +190,10 @@ class VideoExporter(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private var transformer: Transformer? = null
 
-    private fun volumeProcessor(volume: Float): AudioProcessor = ChannelMixingAudioProcessor().apply {
-        for (ch in 1..2) putChannelMixingMatrix(ChannelMixingMatrix.create(ch, ch).scaleBy(volume))
-    }
-
-    private class ConstantSpeed(private val speed: Float) : SpeedProvider {
-        override fun getSpeed(timeUs: Long) = speed
-        override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET
-    }
-
-    /**
-     * Startet den Export. Muss auf dem Haupt-Thread aufgerufen werden.
-     * [onProgress] 0..1, [onDone] mit Galerie-Uri oder Fehler.
-     */
+    /** Startet den Export (Haupt-Thread). */
     fun export(req: ExportRequest, onProgress: (Float) -> Unit, onDone: (Result<Uri>) -> Unit) {
-        val (w, h) = VideoEffects.outputSize(req)
-        val overlayBmp = if (req.texts.isNotEmpty() || req.adj.vignette > 0f)
-            TextRenderer.renderOverlay(w, h, req.texts, req.adj.vignette) else null
-
-        val items = req.clips.map { clip ->
-            val mediaItem = MediaItem.Builder()
-                .setUri(clip.uri)
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(clip.startMs)
-                        .setEndPositionMs(clip.endMs)
-                        .build()
-                )
-                .build()
-            val audio = mutableListOf<AudioProcessor>()
-            val video = mutableListOf<Effect>()
-            if (req.speed != 1f) {
-                val pair = Effects.createExperimentalSpeedChangingEffect(ConstantSpeed(req.speed))
-                audio += pair.first
-                video += pair.second
-            }
-            audio += volumeProcessor(req.originalVolume)
-            video += VideoEffects.presentation(req)
-            video += VideoEffects.colorEffects(req.adj)
-            if (overlayBmp != null) {
-                video += OverlayEffect(ImmutableList.of<TextureOverlay>(BitmapOverlay.createStaticBitmapOverlay(overlayBmp)))
-            }
-            EditedMediaItem.Builder(mediaItem).setEffects(Effects(audio, video)).build()
-        }
-
-        val sequences = mutableListOf(EditedMediaItemSequence(items))
-        if (req.music != null) {
-            val music = EditedMediaItem.Builder(MediaItem.fromUri(req.music))
-                .setRemoveVideo(true)
-                .setEffects(Effects(listOf(volumeProcessor(req.musicVolume)), emptyList()))
-                .build()
-            sequences += EditedMediaItemSequence(listOf(music), /* isLooping= */ true)
-        }
-        val composition = Composition.Builder(sequences)
-            .experimentalSetForceAudioTrack(true)
-            .build()
+        val (w, h) = VideoEffects.outputSize(req.clips, req.format)
+        val composition = VideoEffects.buildComposition(req, forExport = true)
 
         val bitrate = if (w * h >= 1920 * 1080) 16_000_000 else 10_000_000
         val encoderFactory = DefaultEncoderFactory.Builder(context)

@@ -16,7 +16,14 @@ Android-App (ab Android 10) zum Bearbeiten von Fotos und Videos – **komplett o
 
 ### Video
 - Mehrere Clips aneinanderhängen, sortieren, kürzen
-- Gleiche Filter und Regler wie beim Foto (Live-Vorschau)
+- **Übergänge** (12 Stück): Überblenden, Blitz, Schwarzblende, Wischen, Zoom rein/raus,
+  Drehen, Glitch, RGB-Split, Wackeln – Dauer einstellbar, „Für alle Clips“
+- **Beat-Erkennung**: erkennt Tempo (BPM) und Beats der Musik offline;
+  Clips automatisch auf jeden 1./2./4./8. Beat schneiden
+- **Effekte**: Zoom-Puls, Blitz, RGB-Split, Glitch, Wackeln auf jeden Beat;
+  Looks RGB-Verschiebung, VHS, Filmkorn
+- Vorschau zeigt Übergänge und Effekte live (eigene Play-/Spul-Steuerung)
+- Gleiche Filter und Regler wie beim Foto
 - Text-Einblendungen, Vignette
 - Hintergrundmusik, Lautstärke von Originalton und Musik
 - Format: Original, **9:16 (TikTok)**, 1:1, 4:5, 16:9
